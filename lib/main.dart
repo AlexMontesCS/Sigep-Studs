@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -9,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 const String GOOGLE_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbw30aziz2ac15uOBvM0nNtIejFJ3Q8Pmk0ZX12neKjsMIg3Dc38S36waEhZiJZUQHteGg/exec';
+    'https://script.google.com/macros/s/AKfycbwC5D80-De9EoJXBDRkX3u25mYX9ptFWmWfM468JC71hrvUq0ojGOUzewRqKFrgyEr67g/exec';
 Future<Map<String, dynamic>> postToAppsScript(
   Map<String, dynamic> payload,
 ) async {
@@ -50,7 +51,7 @@ Future<void> saveUserToSheets({
   });
 }
 
-Future<String?> uploadPhotoToDrive(File imageFile) async {
+Future<String?> uploadPhotoToDrive(XFile imageFile) async {
   try {
     final bytes = await imageFile.readAsBytes();
     final base64Image = base64Encode(bytes);
@@ -375,6 +376,7 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
   int hours = 0;
   int minutes = 0;
   String? beforePhoto; // Google Drive URL
+  bool uploadingBefore = false;
 
   bool get canStart =>
       beforePhoto != null && (hours > 0 || minutes > 0);
@@ -418,32 +420,39 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () async {
-  final hasPermission = await requestCameraPermission(context);
-  if (!hasPermission) return;
+              onPressed: uploadingBefore ? null : () async {
+  if (!kIsWeb) {
+    final hasPermission = await requestCameraPermission(context);
+    if (!hasPermission) return;
+  }
 
   final picker = ImagePicker();
   final pickedFile = await picker.pickImage(
-    source: ImageSource.camera,
+    source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
+    preferredCameraDevice: CameraDevice.rear,
     imageQuality: 85,
   );
 
   if (pickedFile == null) return;
 
-  final file = File(pickedFile.path);
-  final uploadedUrl = await uploadPhotoToDrive(file);
-
-  if (uploadedUrl != null) {
-    setState(() {
-      beforePhoto = uploadedUrl; // REAL Drive URL
-    });
-  }
+  setState(() => uploadingBefore = true);
+  final uploadedUrl = await uploadPhotoToDrive(pickedFile);
+  setState(() {
+    uploadingBefore = false;
+    if (uploadedUrl != null) beforePhoto = uploadedUrl;
+  });
 },
-              child: Text(
-                beforePhoto == null
-                    ? 'Take Before Photo'
-                    : 'Before Photo Taken ✓',
-              ),
+              child: uploadingBefore
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(
+                      beforePhoto == null
+                          ? 'Take Before Photo'
+                          : 'Before Photo Taken ✓',
+                    ),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -495,6 +504,7 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
   bool burnout = false;
   String? afterPhoto;
   bool backgrounded = false;
+  bool uploadingAfter = false;
 
   @override
   void initState() {
@@ -611,30 +621,37 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: burnout
+              onPressed: (burnout && !uploadingAfter)
     ? () async {
-        final hasPermission = await requestCameraPermission(context);
-        if (!hasPermission) return;
+        if (!kIsWeb) {
+          final hasPermission = await requestCameraPermission(context);
+          if (!hasPermission) return;
+        }
 
         final picker = ImagePicker();
         final pickedFile = await picker.pickImage(
-          source: ImageSource.camera,
+          source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
+          preferredCameraDevice: CameraDevice.rear,
           imageQuality: 85,
         );
 
         if (pickedFile == null) return;
 
-        final file = File(pickedFile.path);
-        final uploadedUrl = await uploadPhotoToDrive(file);
-
-        if (uploadedUrl != null) {
-          setState(() {
-            afterPhoto = uploadedUrl; // Drive URL
-          });
-        }
+        setState(() => uploadingAfter = true);
+        final uploadedUrl = await uploadPhotoToDrive(pickedFile);
+        setState(() {
+          uploadingAfter = false;
+          if (uploadedUrl != null) afterPhoto = uploadedUrl;
+        });
       }
     : null,
-              child: const Text('Take After Photo'),
+              child: uploadingAfter
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Take After Photo'),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
