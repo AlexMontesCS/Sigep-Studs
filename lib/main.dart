@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'camera_web.dart' if (dart.library.io) 'camera_stub.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -426,12 +427,17 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
     if (!hasPermission) return;
   }
 
-  final picker = ImagePicker();
-  final pickedFile = await picker.pickImage(
-    source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
-    preferredCameraDevice: CameraDevice.rear,
-    imageQuality: 85,
-  );
+  XFile? pickedFile;
+  if (kIsWeb) {
+    pickedFile = await captureWebPhoto(context);
+  } else {
+    final picker = ImagePicker();
+    pickedFile = await picker.pickImage(
+      source: ImageSource.camera,
+      preferredCameraDevice: CameraDevice.rear,
+      imageQuality: 85,
+    );
+  }
 
   if (pickedFile == null) return;
 
@@ -628,12 +634,17 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
           if (!hasPermission) return;
         }
 
-        final picker = ImagePicker();
-        final pickedFile = await picker.pickImage(
-          source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
-          preferredCameraDevice: CameraDevice.rear,
-          imageQuality: 85,
-        );
+        XFile? pickedFile;
+        if (kIsWeb) {
+          pickedFile = await captureWebPhoto(context);
+        } else {
+          final picker = ImagePicker();
+          pickedFile = await picker.pickImage(
+            source: ImageSource.camera,
+            preferredCameraDevice: CameraDevice.rear,
+            imageQuality: 85,
+          );
+        }
 
         if (pickedFile == null) return;
 
