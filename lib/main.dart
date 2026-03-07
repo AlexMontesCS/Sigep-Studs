@@ -149,18 +149,21 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final firstCtrl = TextEditingController();
   final lastCtrl = TextEditingController();
-  final emailCtrl = TextEditingController();
-  final phoneCtrl = TextEditingController();
+  final partnerFirstCtrl = TextEditingController();
+  final partnerLastCtrl = TextEditingController();
   bool isLoading = false;
 
   Future<void> saveUser() async {
     final first = firstCtrl.text.trim();
     final last = lastCtrl.text.trim();
-    final email = emailCtrl.text.trim();
-    final phone = phoneCtrl.text.trim();
+    final partnerFirst = partnerFirstCtrl.text.trim();
+    final partnerLast = partnerLastCtrl.text.trim();
 
     // Validate inputs
-    if (first.isEmpty || last.isEmpty || email.isEmpty || phone.isEmpty) {
+    if (first.isEmpty ||
+        last.isEmpty ||
+        partnerFirst.isEmpty ||
+        partnerLast.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
@@ -171,27 +174,29 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
+      final syntheticEmail =
+          '${first.toLowerCase()}.${last.toLowerCase()}@sigepstuds.local';
+
       await saveUserToSheets(
-        email: email,
+        email: syntheticEmail,
         firstName: first,
         lastName: last,
-        phone: phone,
+        phone: 'N/A',
       );
-
-      // Fetch partners from Google Sheets
-      final partners = await fetchPartners(email);
 
       final prefs = await SharedPreferences.getInstance();
 
       // Save user info locally
       await prefs.setString('first_name', first);
       await prefs.setString('last_name', last);
-      await prefs.setString('user_email', email);
-      await prefs.setString('email', email); // For backwards compatibility
-      await prefs.setString('phone', phone);
-
-      await prefs.setString('partner_1', partners['partner_1'] ?? '');
-      await prefs.setString('partner_2', partners['partner_2'] ?? '');
+      await prefs.setString('user_email', syntheticEmail);
+      await prefs.setString(
+        'email',
+        syntheticEmail,
+      ); // For backwards compatibility
+      await prefs.setString('phone', 'N/A');
+      await prefs.setString('partner_1', '$partnerFirst $partnerLast');
+      await prefs.setString('partner_2', '');
 
       if (!mounted) return;
 
@@ -213,8 +218,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     firstCtrl.dispose();
     lastCtrl.dispose();
-    emailCtrl.dispose();
-    phoneCtrl.dispose();
+    partnerFirstCtrl.dispose();
+    partnerLastCtrl.dispose();
     super.dispose();
   }
 
@@ -236,12 +241,12 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: const InputDecoration(labelText: 'Last Name'),
             ),
             TextField(
-              controller: emailCtrl,
-              decoration: const InputDecoration(labelText: 'Email'),
+              controller: partnerFirstCtrl,
+              decoration: const InputDecoration(labelText: 'Partner First Name'),
             ),
             TextField(
-              controller: phoneCtrl,
-              decoration: const InputDecoration(labelText: 'Phone Number'),
+              controller: partnerLastCtrl,
+              decoration: const InputDecoration(labelText: 'Partner Last Name'),
             ),
             const SizedBox(height: 24),
             isLoading
@@ -268,6 +273,19 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
+        ],
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -376,11 +394,29 @@ class PreSessionScreen extends StatefulWidget {
 class _PreSessionScreenState extends State<PreSessionScreen> {
   int hours = 0;
   int minutes = 0;
-  String? beforePhoto; // Google Drive URL
+  String? beforePhoto;
   bool uploadingBefore = false;
+  bool pomodoroMode = false;
+  int pomodoroRounds = 4;
+  int pomodoroWorkMin = 25;
+  int pomodoroBreakMin = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPomodoroSettings();
+  }
+
+  Future<void> _loadPomodoroSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      pomodoroWorkMin = prefs.getInt('pomo_work_min') ?? 25;
+      pomodoroBreakMin = prefs.getInt('pomo_break_min') ?? 5;
+    });
+  }
 
   bool get canStart =>
-      beforePhoto != null && (hours > 0 || minutes > 0);
+      beforePhoto != null && (pomodoroMode || hours > 0 || minutes > 0);
 
   @override
   Widget build(BuildContext context) {
@@ -391,34 +427,120 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                DropdownButton<int>(
-                  value: hours,
-                  items: List.generate(
-                    7,
-                    (i) => DropdownMenuItem(
-                      value: i,
-                      child: Text('$i h'),
-                    ),
-                  ),
-                  onChanged: (v) => setState(() => hours = v!),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  label: Text('Custom'),
+                  icon: Icon(Icons.timer),
                 ),
-                const SizedBox(width: 24),
-                DropdownButton<int>(
-                  value: minutes,
-                  items: List.generate(
-                    60,
-                    (i) => DropdownMenuItem(
-                      value: i,
-                      child: Text('$i m'),
-                    ),
-                  ),
-                  onChanged: (v) => setState(() => minutes = v!),
+                ButtonSegment(
+                  value: true,
+                  label: Text('Pomodoro'),
+                  icon: Icon(Icons.av_timer),
                 ),
               ],
+              selected: {pomodoroMode},
+              onSelectionChanged: (s) => setState(() => pomodoroMode = s.first),
             ),
+            const SizedBox(height: 24),
+            if (!pomodoroMode) ...[  
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  DropdownButton<int>(
+                    value: hours,
+                    items: List.generate(
+                      7,
+                      (i) => DropdownMenuItem(value: i, child: Text('$i h')),
+                    ),
+                    onChanged: (v) => setState(() => hours = v!),
+                  ),
+                  const SizedBox(width: 24),
+                  DropdownButton<int>(
+                    value: minutes,
+                    items: List.generate(
+                      60,
+                      (i) => DropdownMenuItem(value: i, child: Text('$i m')),
+                    ),
+                    onChanged: (v) => setState(() => minutes = v!),
+                  ),
+                ],
+              ),
+            ] else ...[  
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.work_outline, color: Colors.deepPurple),
+                        title: const Text('Work duration'),
+                        subtitle: Text('$pomodoroWorkMin minutes'),
+                        trailing: SizedBox(
+                          width: 140,
+                          child: Slider(
+                            value: pomodoroWorkMin.toDouble(),
+                            min: 5,
+                            max: 60,
+                            divisions: 11,
+                            label: '$pomodoroWorkMin min',
+                            onChanged: (v) async {
+                              setState(() => pomodoroWorkMin = v.round());
+                              final prefs = await SharedPreferences.getInstance();
+                              await prefs.setInt('pomo_work_min', pomodoroWorkMin);
+                            },
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.coffee_outlined, color: Colors.green),
+                        title: const Text('Break duration'),
+                        subtitle: Text('$pomodoroBreakMin minutes'),
+                        trailing: SizedBox(
+                          width: 140,
+                          child: Slider(
+                            value: pomodoroBreakMin.toDouble(),
+                            min: 1,
+                            max: 30,
+                            divisions: 29,
+                            label: '$pomodoroBreakMin min',
+                            activeColor: Colors.green,
+                            onChanged: (v) async {
+                              setState(() => pomodoroBreakMin = v.round());
+                              final prefs = await SharedPreferences.getInstance();
+                              await prefs.setInt('pomo_break_min', pomodoroBreakMin);
+                            },
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text('Rounds: ', style: TextStyle(fontSize: 16)),
+                          DropdownButton<int>(
+                            value: pomodoroRounds,
+                            items: List.generate(
+                              8,
+                              (i) => DropdownMenuItem(
+                                value: i + 1,
+                                child: Text('${i + 1}'),
+                              ),
+                            ),
+                            onChanged: (v) => setState(() => pomodoroRounds = v!),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: uploadingBefore ? null : () async {
@@ -464,14 +586,20 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
             ElevatedButton(
               onPressed: canStart
                   ? () {
-                      final totalSeconds =
-                          (hours * 3600) + (minutes * 60);
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
                           builder: (_) => ActiveSessionScreen(
-                            totalSeconds: totalSeconds,
+                            totalSeconds: pomodoroMode
+                                ? pomodoroRounds *
+                                    (pomodoroWorkMin + pomodoroBreakMin) *
+                                    60
+                                : (hours * 3600) + (minutes * 60),
                             beforePhoto: beforePhoto!,
+                            pomodoroMode: pomodoroMode,
+                            workSeconds: pomodoroWorkMin * 60,
+                            breakSeconds: pomodoroBreakMin * 60,
+                            pomodoroRounds: pomodoroRounds,
                           ),
                         ),
                       );
@@ -491,11 +619,19 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
 class ActiveSessionScreen extends StatefulWidget {
   final int totalSeconds;
   final String beforePhoto;
+  final bool pomodoroMode;
+  final int workSeconds;
+  final int breakSeconds;
+  final int pomodoroRounds;
 
   const ActiveSessionScreen({
     super.key,
     required this.totalSeconds,
     required this.beforePhoto,
+    this.pomodoroMode = false,
+    this.workSeconds = 1500,
+    this.breakSeconds = 300,
+    this.pomodoroRounds = 4,
   });
 
   @override
@@ -511,25 +647,56 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
   String? afterPhoto;
   bool backgrounded = false;
   bool uploadingAfter = false;
+  int currentRound = 1;
+  bool isBreak = false;
+  int totalWorkSecondsElapsed = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    remaining = widget.totalSeconds;
+    remaining = widget.pomodoroMode ? widget.workSeconds : widget.totalSeconds;
     startTimer();
   }
 
   void startTimer() {
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!paused && remaining > 0) {
-        setState(() => remaining--);
+        setState(() {
+          remaining--;
+          if (widget.pomodoroMode && !isBreak) totalWorkSecondsElapsed++;
+        });
       }
       if (remaining == 0) {
         timer?.cancel();
-        setState(() => burnout = true);
+        if (widget.pomodoroMode) {
+          _handlePomodoroPhaseEnd();
+        } else {
+          setState(() => burnout = true);
+        }
       }
     });
+  }
+
+  void _handlePomodoroPhaseEnd() {
+    if (!isBreak) {
+      if (currentRound >= widget.pomodoroRounds) {
+        setState(() => burnout = true);
+      } else {
+        setState(() {
+          isBreak = true;
+          remaining = widget.breakSeconds;
+        });
+        startTimer();
+      }
+    } else {
+      setState(() {
+        isBreak = false;
+        currentRound++;
+        remaining = widget.workSeconds;
+      });
+      startTimer();
+    }
   }
 
   @override
@@ -550,7 +717,9 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
   }
 
   Future<void> submitSession() async {
-    final elapsed = widget.totalSeconds - remaining;
+    final elapsed = widget.pomodoroMode
+        ? totalWorkSecondsElapsed
+        : widget.totalSeconds - remaining;
     int minutesElapsed = elapsed ~/ 60;
     if (elapsed % 60 >= 35) minutesElapsed++;
 
@@ -597,11 +766,25 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            if (widget.pomodoroMode) ...[  
+              Text(
+                isBreak
+                    ? 'Break  •  Round $currentRound/${widget.pomodoroRounds}'
+                    : 'Work  •  Round $currentRound/${widget.pomodoroRounds}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: isBreak ? Colors.green : Colors.deepPurple,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             Text(
               format(remaining),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 48,
                 fontWeight: FontWeight.bold,
+                color: widget.pomodoroMode && isBreak ? Colors.green : null,
               ),
             ),
             const SizedBox(height: 32),
@@ -675,6 +858,267 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/* ================= SETTINGS SCREEN ================= */
+
+class PrivacyPolicyScreen extends StatelessWidget {
+  const PrivacyPolicyScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Privacy Policy')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          Text(
+            'SigEp Studs Privacy Policy',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: 12),
+          Text(
+            'Last updated: March 7, 2026',
+            style: TextStyle(fontSize: 14, color: Colors.black54),
+          ),
+          SizedBox(height: 20),
+          Text(
+            'Information We Collect',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'We may collect your name, partner name, session details, and before/after study photos you submit in the app.',
+          ),
+          SizedBox(height: 16),
+          Text(
+            'How We Use Information',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'We use this information to log study sessions, support partner accountability, and improve the app experience.',
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Storage and Processing',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Session data and uploaded photos are processed using connected Google services used by this app.',
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Sharing',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'We do not sell your personal information. Data is shared only as needed to operate core app features.',
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Your Choices',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'You can stop using the app at any time and sign out to clear locally stored app data on your device.',
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Contact',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'If you have privacy questions, contact the app administrator or chapter leadership.',
+          ),
+          SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  int workMin = 25;
+  int breakMin = 5;
+  String firstName = '';
+  String lastName = '';
+  String email = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      workMin = prefs.getInt('pomo_work_min') ?? 25;
+      breakMin = prefs.getInt('pomo_break_min') ?? 5;
+      firstName = prefs.getString('first_name') ?? '';
+      lastName = prefs.getString('last_name') ?? '';
+      email = prefs.getString('user_email') ?? '';
+    });
+  }
+
+  Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('pomo_work_min', workMin);
+    await prefs.setInt('pomo_break_min', breakMin);
+  }
+
+  Future<void> _signOut(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sign Out', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    if (!context.mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // User card
+          Card(
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.deepPurple,
+                child: Text(
+                  firstName.isNotEmpty ? firstName[0].toUpperCase() : '?',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+              title: Text('$firstName $lastName',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(email),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Pomodoro section
+          Text(
+            'POMODORO',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[600],
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.work_outline, color: Colors.deepPurple),
+                  title: const Text('Work duration'),
+                  subtitle: Text('$workMin minutes'),
+                  trailing: SizedBox(
+                    width: 150,
+                    child: Slider(
+                      value: workMin.toDouble(),
+                      min: 5,
+                      max: 60,
+                      divisions: 11,
+                      label: '$workMin min',
+                      onChanged: (v) {
+                        setState(() => workMin = v.round());
+                        _save();
+                      },
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.coffee_outlined, color: Colors.green),
+                  title: const Text('Break duration'),
+                  subtitle: Text('$breakMin minutes'),
+                  trailing: SizedBox(
+                    width: 150,
+                    child: Slider(
+                      value: breakMin.toDouble(),
+                      min: 1,
+                      max: 30,
+                      divisions: 29,
+                      label: '$breakMin min',
+                      activeColor: Colors.green,
+                      onChanged: (v) {
+                        setState(() => breakMin = v.round());
+                        _save();
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const PrivacyPolicyScreen(),
+              ),
+            ),
+            icon: const Icon(Icons.privacy_tip_outlined),
+            label: const Text('Privacy Policy'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          OutlinedButton.icon(
+            onPressed: () => _signOut(context),
+            icon: const Icon(Icons.logout, color: Colors.red),
+            label: const Text('Sign Out', style: TextStyle(color: Colors.red)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.red),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+        ],
       ),
     );
   }
