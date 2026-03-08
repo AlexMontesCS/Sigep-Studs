@@ -11,30 +11,54 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 const String GOOGLE_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbwC5D80-De9EoJXBDRkX3u25mYX9ptFWmWfM468JC71hrvUq0ojGOUzewRqKFrgyEr67g/exec';
+    'https://script.google.com/macros/s/AKfycbxEzDNvwtghjwDsYNn0MufGPVfsga2NRt9kaZf1lDnZQ4FR0TOYPiJTZMz7S7bbqOao/exec';
+
+/// Posts to Apps Script with explicit redirect handling.
+/// Apps Script returns a 302 redirect; the redirect URL must be
+/// followed with GET (not POST) to retrieve the JSON response.
 Future<Map<String, dynamic>> postToAppsScript(
   Map<String, dynamic> payload,
 ) async {
-  final response = await http.post(
-    Uri.parse(GOOGLE_SCRIPT_URL),
-    headers: {'Content-Type': 'application/json'},
-    body: jsonEncode(payload),
-  );
+  final client = http.Client();
+  try {
+    // Send POST but don't auto-follow redirects
+    final request = http.Request('POST', Uri.parse(GOOGLE_SCRIPT_URL));
+    request.headers['Content-Type'] = 'application/json';
+    request.body = jsonEncode(payload);
+    request.followRedirects = false;
 
-  if (response.statusCode != 200) {
-    throw Exception('Apps Script HTTP ${response.statusCode}');
+    final streamed = await client.send(request);
+
+    http.Response response;
+
+    if (streamed.isRedirect) {
+      // Apps Script 302: follow the redirect with GET
+      final location = streamed.headers['location'];
+      if (location == null) {
+        throw Exception('Apps Script redirect missing location header');
+      }
+      response = await client.get(Uri.parse(location));
+    } else {
+      response = await http.Response.fromStream(streamed);
+    }
+
+    if (response.statusCode != 200) {
+      throw Exception('Apps Script HTTP ${response.statusCode}');
+    }
+
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic>) {
+      throw Exception('Invalid Apps Script response');
+    }
+
+    if (data['status'] != 'success') {
+      throw Exception(data['message'] ?? 'Apps Script error');
+    }
+
+    return data;
+  } finally {
+    client.close();
   }
-
-  final data = jsonDecode(response.body);
-  if (data is! Map<String, dynamic>) {
-    throw Exception('Invalid Apps Script response');
-  }
-
-  if (data['status'] != 'success') {
-    throw Exception(data['message'] ?? 'Apps Script error');
-  }
-
-  return data;
 }
 
 Future<void> saveUserToSheets({
@@ -80,6 +104,13 @@ Future<Map<String, String>> fetchPartners(String email) async {
     'partner_1': data['partner_1']?.toString() ?? '',
     'partner_2': data['partner_2']?.toString() ?? '',
   };
+}
+
+Future<Map<String, dynamic>> fetchUser(String email) async {
+  return await postToAppsScript({
+    'action': 'get_user',
+    'user_email': email,
+  });
 }
 void main() {
   runApp(const SigEpStudsApp());
@@ -147,26 +178,16 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final firstCtrl = TextEditingController();
-  final lastCtrl = TextEditingController();
-  final partnerFirstCtrl = TextEditingController();
-  final partnerLastCtrl = TextEditingController();
+  final emailCtrl = TextEditingController();
   bool isLoading = false;
 
-  Future<void> saveUser() async {
-    final first = firstCtrl.text.trim();
-    final last = lastCtrl.text.trim();
-    final partnerFirst = partnerFirstCtrl.text.trim();
-    final partnerLast = partnerLastCtrl.text.trim();
+  Future<void> login() async {
+    final email = emailCtrl.text.trim().toLowerCase();
 
-    // Validate inputs
-    if (first.isEmpty ||
-        last.isEmpty ||
-        partnerFirst.isEmpty ||
-        partnerLast.isEmpty) {
+    if (email.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
+        const SnackBar(content: Text('Please enter your email')),
       );
       return;
     }
@@ -174,29 +195,15 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
-      final syntheticEmail =
-          '${first.toLowerCase()}.${last.toLowerCase()}@sigepstuds.local';
-
-      await saveUserToSheets(
-        email: syntheticEmail,
-        firstName: first,
-        lastName: last,
-        phone: 'N/A',
-      );
+      // Fetch user info from backend
+      final userData = await fetchUser(email);
 
       final prefs = await SharedPreferences.getInstance();
-
-      // Save user info locally
-      await prefs.setString('first_name', first);
-      await prefs.setString('last_name', last);
-      await prefs.setString('user_email', syntheticEmail);
-      await prefs.setString(
-        'email',
-        syntheticEmail,
-      ); // For backwards compatibility
-      await prefs.setString('phone', 'N/A');
-      await prefs.setString('partner_1', '$partnerFirst $partnerLast');
-      await prefs.setString('partner_2', '');
+      await prefs.setString('user_email', email);
+      await prefs.setString('first_name', userData['first_name']?.toString() ?? '');
+      await prefs.setString('last_name', userData['last_name']?.toString() ?? '');
+      await prefs.setString('partner_1', userData['partner_1']?.toString() ?? '');
+      await prefs.setString('partner_2', userData['partner_2']?.toString() ?? '');
 
       if (!mounted) return;
 
@@ -210,16 +217,13 @@ class _LoginScreenState extends State<LoginScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
-      debugPrint('Save user error: $e');
+      debugPrint('Login error: $e');
     }
   }
 
   @override
   void dispose() {
-    firstCtrl.dispose();
-    lastCtrl.dispose();
-    partnerFirstCtrl.dispose();
-    partnerLastCtrl.dispose();
+    emailCtrl.dispose();
     super.dispose();
   }
 
@@ -233,20 +237,10 @@ class _LoginScreenState extends State<LoginScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             TextField(
-              controller: firstCtrl,
-              decoration: const InputDecoration(labelText: 'First Name'),
-            ),
-            TextField(
-              controller: lastCtrl,
-              decoration: const InputDecoration(labelText: 'Last Name'),
-            ),
-            TextField(
-              controller: partnerFirstCtrl,
-              decoration: const InputDecoration(labelText: 'Partner First Name'),
-            ),
-            TextField(
-              controller: partnerLastCtrl,
-              decoration: const InputDecoration(labelText: 'Partner Last Name'),
+              controller: emailCtrl,
+              decoration: const InputDecoration(labelText: 'Email'),
+              keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
             ),
             const SizedBox(height: 24),
             isLoading
@@ -255,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Center(child: CircularProgressIndicator()),
                   )
                 : ElevatedButton(
-                    onPressed: saveUser,
+                    onPressed: login,
                     child: const Text('Continue'),
                   ),
           ],
@@ -267,8 +261,30 @@ class _LoginScreenState extends State<LoginScreen> {
 
 /* ================= HOME SCREEN ================= */
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String firstName = '';
+  String partner = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserInfo();
+  }
+
+  Future<void> _loadUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      firstName = prefs.getString('first_name') ?? '';
+      partner = prefs.getString('partner_1') ?? '';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -319,10 +335,25 @@ class HomeScreen extends StatelessWidget {
               ]),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Balanced men hold each other accountable',
+            Text(
+              'Welcome $firstName',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
               textAlign: TextAlign.center,
             ),
+            if (partner.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Your partner is $partner',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey[600],
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: 32),
             ElevatedButton(
               onPressed: () {
