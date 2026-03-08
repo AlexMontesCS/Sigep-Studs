@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 const String GOOGLE_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbxEzDNvwtghjwDsYNn0MufGPVfsga2NRt9kaZf1lDnZQ4FR0TOYPiJTZMz7S7bbqOao/exec';
+    'https://script.google.com/macros/s/AKfycbwYOgPJdH5h1PGb8N5I_icUXVHGIPNtzCo9QTKCfRRJILtZivL1AQp8ZEo1U7HgQB8x/exec';
 
 /// Posts to Apps Script with explicit redirect handling.
 /// Apps Script returns a 302 redirect; the redirect URL must be
@@ -66,6 +66,8 @@ Future<void> saveUserToSheets({
   required String firstName,
   required String lastName,
   required String phone,
+  String partner1 = '',
+  String partner2 = '',
 }) async {
   await postToAppsScript({
     'action': 'save_user',
@@ -73,6 +75,8 @@ Future<void> saveUserToSheets({
     'first_name': firstName,
     'last_name': lastName,
     'phone': phone,
+    'partner_1': partner1,
+    'partner_2': partner2,
   });
 }
 
@@ -179,7 +183,11 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final emailCtrl = TextEditingController();
+  final firstNameCtrl = TextEditingController();
+  final lastNameCtrl = TextEditingController();
+  final partnerCtrl = TextEditingController();
   bool isLoading = false;
+  bool isNewUser = false;
 
   Future<void> login() async {
     final email = emailCtrl.text.trim().toLowerCase();
@@ -195,7 +203,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
-      // Fetch user info from backend
       final userData = await fetchUser(email);
 
       final prefs = await SharedPreferences.getInstance();
@@ -213,24 +220,80 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       setState(() => isLoading = false);
+      // If user not found, show registration fields
+      if (e.toString().contains('User not found')) {
+        setState(() => isNewUser = true);
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+      debugPrint('Login error: $e');
+    }
+  }
+
+  Future<void> register() async {
+    final email = emailCtrl.text.trim().toLowerCase();
+    final first = firstNameCtrl.text.trim();
+    final last = lastNameCtrl.text.trim();
+    final partner = partnerCtrl.text.trim();
+
+    if (first.isEmpty || last.isEmpty || partner.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      await saveUserToSheets(
+        email: email,
+        firstName: first,
+        lastName: last,
+        phone: 'N/A',
+        partner1: partner,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_email', email);
+      await prefs.setString('first_name', first);
+      await prefs.setString('last_name', last);
+      await prefs.setString('partner_1', partner);
+      await prefs.setString('partner_2', '');
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    } catch (e) {
+      setState(() => isLoading = false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
-      debugPrint('Login error: $e');
+      debugPrint('Register error: $e');
     }
   }
 
   @override
   void dispose() {
     emailCtrl.dispose();
+    firstNameCtrl.dispose();
+    lastNameCtrl.dispose();
+    partnerCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Welcome')),
+      appBar: AppBar(title: Text(isNewUser ? 'Create Account' : 'Welcome')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -241,7 +304,23 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: const InputDecoration(labelText: 'Email'),
               keyboardType: TextInputType.emailAddress,
               autocorrect: false,
+              enabled: !isNewUser,
             ),
+            if (isNewUser) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: firstNameCtrl,
+                decoration: const InputDecoration(labelText: 'First Name'),
+              ),
+              TextField(
+                controller: lastNameCtrl,
+                decoration: const InputDecoration(labelText: 'Last Name'),
+              ),
+              TextField(
+                controller: partnerCtrl,
+                decoration: const InputDecoration(labelText: "Partner's Name"),
+              ),
+            ],
             const SizedBox(height: 24),
             isLoading
                 ? const SizedBox(
@@ -249,8 +328,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Center(child: CircularProgressIndicator()),
                   )
                 : ElevatedButton(
-                    onPressed: login,
-                    child: const Text('Continue'),
+                    onPressed: isNewUser ? register : login,
+                    child: Text(isNewUser ? 'Sign Up' : 'Continue'),
                   ),
           ],
         ),
