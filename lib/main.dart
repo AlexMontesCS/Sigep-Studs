@@ -11,54 +11,36 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 const String GOOGLE_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbwYOgPJdH5h1PGb8N5I_icUXVHGIPNtzCo9QTKCfRRJILtZivL1AQp8ZEo1U7HgQB8x/exec';
+    'https://script.google.com/macros/s/AKfycbzviuT2H4YDhKKImq2PrtIWSMFHJXyMVab3fxwsKQ5BTUWbOkRlf16JMyCCow2fooG6/exec';
 
-/// Posts to Apps Script with explicit redirect handling.
-/// Apps Script returns a 302 redirect; the redirect URL must be
-/// followed with GET (not POST) to retrieve the JSON response.
+/// Posts to Apps Script. Uses GET with query params to avoid
+/// redirect issues on iOS (Apps Script 302 converts POST→GET).
 Future<Map<String, dynamic>> postToAppsScript(
   Map<String, dynamic> payload,
 ) async {
-  final client = http.Client();
-  try {
-    // Send POST but don't auto-follow redirects
-    final request = http.Request('POST', Uri.parse(GOOGLE_SCRIPT_URL));
-    request.headers['Content-Type'] = 'application/json';
-    request.body = jsonEncode(payload);
-    request.followRedirects = false;
+  // Encode the payload as a query parameter to use GET instead of POST.
+  // This avoids the 302 redirect issue where POST gets converted to GET
+  // and the body is lost.
+  final uri = Uri.parse(GOOGLE_SCRIPT_URL).replace(
+    queryParameters: {'payload': jsonEncode(payload)},
+  );
 
-    final streamed = await client.send(request);
+  final response = await http.get(uri);
 
-    http.Response response;
-
-    if (streamed.isRedirect) {
-      // Apps Script 302: follow the redirect with GET
-      final location = streamed.headers['location'];
-      if (location == null) {
-        throw Exception('Apps Script redirect missing location header');
-      }
-      response = await client.get(Uri.parse(location));
-    } else {
-      response = await http.Response.fromStream(streamed);
-    }
-
-    if (response.statusCode != 200) {
-      throw Exception('Apps Script HTTP ${response.statusCode}');
-    }
-
-    final data = jsonDecode(response.body);
-    if (data is! Map<String, dynamic>) {
-      throw Exception('Invalid Apps Script response');
-    }
-
-    if (data['status'] != 'success') {
-      throw Exception(data['message'] ?? 'Apps Script error');
-    }
-
-    return data;
-  } finally {
-    client.close();
+  if (response.statusCode != 200) {
+    throw Exception('Apps Script HTTP ${response.statusCode}');
   }
+
+  final data = jsonDecode(response.body);
+  if (data is! Map<String, dynamic>) {
+    throw Exception('Invalid Apps Script response');
+  }
+
+  if (data['status'] != 'success') {
+    throw Exception(data['message'] ?? 'Apps Script error');
+  }
+
+  return data;
 }
 
 Future<void> saveUserToSheets({
@@ -85,13 +67,43 @@ Future<String?> uploadPhotoToDrive(XFile imageFile) async {
     final bytes = await imageFile.readAsBytes();
     final base64Image = base64Encode(bytes);
 
-    final data = await postToAppsScript({
-      'action': 'upload_photo',
-      'image_base64': base64Image,
-      'file_name': 'study_${DateTime.now().millisecondsSinceEpoch}.jpg',
-    });
+    // Photo uploads are too large for GET query params, use POST directly.
+    // doPost in Apps Script still handles this action.
+    final client = http.Client();
+    try {
+      final request = http.Request('POST', Uri.parse(GOOGLE_SCRIPT_URL));
+      request.headers['Content-Type'] = 'application/json';
+      request.body = jsonEncode({
+        'action': 'upload_photo',
+        'image_base64': base64Image,
+        'file_name': 'study_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      });
+      request.followRedirects = false;
 
-    return data['photo_url']?.toString();
+      final streamed = await client.send(request);
+      http.Response response;
+
+      if (streamed.statusCode >= 300 && streamed.statusCode < 400) {
+        final location = streamed.headers['location'];
+        if (location == null) throw Exception('Missing redirect location');
+        response = await client.get(Uri.parse(location));
+      } else {
+        response = await http.Response.fromStream(streamed);
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Upload HTTP ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic> || data['status'] != 'success') {
+        throw Exception(data['message'] ?? 'Upload failed');
+      }
+
+      return data['photo_url']?.toString();
+    } finally {
+      client.close();
+    }
   } catch (e) {
     debugPrint('Upload error: $e');
     return null;
