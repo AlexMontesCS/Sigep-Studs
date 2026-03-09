@@ -686,6 +686,11 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
     uploadingBefore = false;
     if (uploadedUrl != null) beforePhoto = uploadedUrl;
   });
+  if (uploadedUrl == null && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Photo upload failed. Check your connection and try again.')),
+    );
+  }
 },
               child: uploadingBefore
                   ? const SizedBox(
@@ -949,6 +954,11 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
           uploadingAfter = false;
           if (uploadedUrl != null) afterPhoto = uploadedUrl;
         });
+        if (uploadedUrl == null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Photo upload failed. Check your connection and try again.')),
+          );
+        }
       }
     : null,
               child: uploadingAfter
