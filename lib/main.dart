@@ -86,7 +86,8 @@ Future<String?> uploadPhotoToDrive(XFile imageFile) async {
       if (streamed.statusCode >= 300 && streamed.statusCode < 400) {
         final location = streamed.headers['location'];
         if (location == null) throw Exception('Missing redirect location');
-        response = await client.get(Uri.parse(location));
+        await streamed.stream.drain(); // consume redirect body before next request
+        response = await http.get(Uri.parse(location));
       } else {
         response = await http.Response.fromStream(streamed);
       }
@@ -267,15 +268,16 @@ class _LoginScreenState extends State<LoginScreen> {
         firstName: first,
         lastName: last,
         phone: 'N/A',
-        partner1: partner,
+        partner1: first,
+        partner2: partner,
       );
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('user_email', email);
       await prefs.setString('first_name', first);
       await prefs.setString('last_name', last);
-      await prefs.setString('partner_1', partner);
-      await prefs.setString('partner_2', '');
+      await prefs.setString('partner_1', first);
+      await prefs.setString('partner_2', partner);
 
       if (!mounted) return;
 
