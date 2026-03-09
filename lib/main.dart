@@ -373,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       firstName = prefs.getString('first_name') ?? '';
-      partner = prefs.getString('partner_1') ?? '';
+      partner = prefs.getString('partner_2') ?? '';
     });
   }
 
