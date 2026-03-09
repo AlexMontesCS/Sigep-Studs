@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 const String GOOGLE_SCRIPT_URL =
-    'https://script.google.com/macros/s/AKfycbzviuT2H4YDhKKImq2PrtIWSMFHJXyMVab3fxwsKQ5BTUWbOkRlf16JMyCCow2fooG6/exec';
+    'https://script.google.com/macros/s/AKfycbwJNeJ0vHlAbDKVB7MrEACx4r0puJ4eSyyprnGn7NBDy5EiCdLGjx_jEqugMx_QA-xg/exec';
 
 /// Posts to Apps Script. Uses GET with query params to avoid
 /// redirect issues on iOS (Apps Script 302 converts POST→GET).
