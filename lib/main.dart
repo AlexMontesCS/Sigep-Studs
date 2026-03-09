@@ -666,11 +666,6 @@ class _PreSessionScreenState extends State<PreSessionScreen> {
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: uploadingBefore ? null : () async {
-  if (!kIsWeb) {
-    final hasPermission = await requestCameraPermission(context);
-    if (!hasPermission) return;
-  }
-
   XFile? pickedFile;
   if (kIsWeb) {
     pickedFile = await captureWebPhoto(context);
@@ -934,11 +929,6 @@ class _ActiveSessionScreenState extends State<ActiveSessionScreen>
             ElevatedButton(
               onPressed: (burnout && !uploadingAfter)
     ? () async {
-        if (!kIsWeb) {
-          final hasPermission = await requestCameraPermission(context);
-          if (!hasPermission) return;
-        }
-
         XFile? pickedFile;
         if (kIsWeb) {
           pickedFile = await captureWebPhoto(context);
